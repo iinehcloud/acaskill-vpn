@@ -1,0 +1,112 @@
+version: "3.9"
+
+# =============================================================================
+# AcaSkill VPN - Docker Compose Stack
+# Services: Caddy (HTTPS), API (Node), Aggregator (Go), PostgreSQL
+# =============================================================================
+
+networks:
+  acaskill:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+  logs:
+
+services:
+
+  # ── Caddy (HTTPS reverse proxy + auto SSL via Let's Encrypt) ───────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: acaskill_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - logs:/logs
+    environment:
+      - VPN_DOMAIN=${VPN_DOMAIN}
+      - API_DOMAIN=${API_DOMAIN}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+    networks:
+      - acaskill
+    depends_on:
+      - api
+
+  # ── PostgreSQL (license + client data) ────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: acaskill_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: acaskill_vpn
+      POSTGRES_USER: acaskill
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - acaskill
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acaskill -d acaskill_vpn"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Licensing & Provisioning API (Node.js / Fastify) ──────────────────────
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: acaskill_api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://acaskill:${DB_PASSWORD}@postgres:5432/acaskill_vpn
+      API_SECRET: ${API_SECRET}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      WG_SERVER_PUBLIC_KEY: ${WG_SERVER_PUBLIC_KEY}
+      WG_CONFIG_PATH: /etc/wireguard/wg0.conf
+      AGG_PORT: ${AGG_PORT}
+      WG_PORT: ${WG_PORT}
+    volumes:
+      - /etc/wireguard/wg0.conf:/etc/wireguard/wg0.conf   # API manages peers
+      - logs:/logs
+    networks:
+      - acaskill
+    depends_on:
+      postgres:
+        condition: service_healthy
+    cap_add:
+      - NET_ADMIN   # needed to run wg commands
+
+  # ── Bonding Aggregator (Go) ────────────────────────────────────────────────
+  aggregator:
+    build:
+      context: ./aggregator
+      dockerfile: Dockerfile
+    container_name: acaskill_aggregator
+    restart: unless-stopped
+    ports:
+      - "${AGG_PORT}:${AGG_PORT}/tcp"
+    environment:
+      AGG_PORT: ${AGG_PORT}
+      API_SECRET: ${API_SECRET}
+      API_URL: http://api:3000
+      WG_SUBNET: "10.8.0.0/16"
+    networks:
+      - acaskill
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
