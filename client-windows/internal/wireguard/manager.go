@@ -28,6 +28,7 @@ ServerPubKey  string
 ServerHost    string
 ServerPort    int
 Label         string
+ServerIP      string
 }
 
 type Manager struct {
@@ -66,6 +67,7 @@ OK           bool   `json:"ok"`
 AssignedIP   string `json:"assignedIp"`
 ServerPubKey string `json:"serverPubKey"`
 ServerPort   int    `json:"serverPort"`
+ServerIP     string `json:"serverIp"`
 Error        string `json:"error"`
 }
 body, _ := json.Marshal(req{DeviceID: deviceID, PublicKey: publicKey, LicenseKey: m.cfg.LicenseKey, InterfaceLabel: label})
@@ -76,12 +78,33 @@ defer r.Body.Close()
 var result resp
 json.NewDecoder(r.Body).Decode(&result)
 if !result.OK { return nil, fmt.Errorf("server: %s", result.Error) }
-return &TunnelConfig{AssignedIP: result.AssignedIP, ServerPubKey: result.ServerPubKey, ServerHost: m.cfg.VPNHost, ServerPort: result.ServerPort, Label: label}, nil
+return &TunnelConfig{
+AssignedIP:   result.AssignedIP,
+ServerPubKey: result.ServerPubKey,
+ServerHost:   m.cfg.VPNHost,
+ServerPort:   result.ServerPort,
+ServerIP:     result.ServerIP,
+Label:        label,
+}, nil
 }
 
 func BuildWgConfig(tc *TunnelConfig) string {
-return fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress    = %s/32\nDNS        = 1.1.1.1\n\n[Peer]\nPublicKey  = %s\nEndpoint   = %s:%d\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n",
-tc.PrivateKey, tc.AssignedIP, tc.ServerPubKey, tc.ServerHost, tc.ServerPort)
+// Exclude server IP from tunnel to prevent routing loop
+// AllowedIPs covers all traffic EXCEPT the direct route to the VPN server
+serverExclude := ""
+if tc.ServerIP != "" {
+serverExclude = fmt.Sprintf("# Server IP routed directly (not through tunnel)\r\n# %s/32 excluded via pre-up route\r\n", tc.ServerIP)
+}
+
+return fmt.Sprintf("[Interface]\r\nPrivateKey = %s\r\nAddress = %s/32\r\nDNS = 1.1.1.1\r\n%s\r\n[Peer]\r\nPublicKey = %s\r\nEndpoint = %s:%d\r\nAllowedIPs = 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16\r\nPersistentKeepalive = 25\r\n",
+tc.PrivateKey, tc.AssignedIP, serverExclude, tc.ServerPubKey, tc.ServerHost, tc.ServerPort)
+}
+
+func WriteConfigFile(path, content string) error {
+if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+return fmt.Errorf("create dir: %w", err)
+}
+return os.WriteFile(path, []byte(content), 0600)
 }
 
 func sanitizeLabel(label string) string {
