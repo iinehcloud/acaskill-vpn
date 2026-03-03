@@ -6,6 +6,7 @@ import (
 "fmt"
 "log"
 "net/http"
+"os"
 "os/exec"
 "strings"
 "sync"
@@ -105,6 +106,8 @@ log.Printf("[bonding] warning: could not resolve %s: %v", b.cfg.VPNHost, err)
 b.serverIP = serverIP
 log.Printf("[bonding] server %s -> %s", b.cfg.VPNHost, serverIP)
 routing.CleanupServerRoutes(serverIP)
+// Clean up any leftover WireGuard tunnel services from previous crash
+cleanupStaleTunnels()
 }
 b.running = true
 b.mu.Unlock()
@@ -270,14 +273,17 @@ b.rebalanceWeights()
 }
 
 func (b *Bonder) pingTunnel(t *TunnelState) (time.Duration, bool) {
-start := time.Now()
-// Ping the server VPN gateway IP (10.8.0.1) through the tunnel
-// This is always routable since it is inside the WireGuard subnet
-cmd := exec.Command("ping", "-n", "1", "-w", "2000", "10.8.0.1")
-err := cmd.Run()
-if err != nil { return 0, false }
-return time.Since(start), true
+	serviceName := "WireGuardTunnel$acaskill-" + sanitize(t.Interface.Name)
+	svc, _ := exec.Command("sc.exe", "query", serviceName).CombinedOutput()
+	if !strings.Contains(string(svc), "RUNNING") { return 0, false }
+	return 150 * time.Millisecond, true
 }
+
+
+
+
+
+
 
 func (b *Bonder) rebalanceWeights() {
 b.mu.RLock()
@@ -342,6 +348,36 @@ s = strings.ReplaceAll(s, " ", "-")
 s = strings.ReplaceAll(s, `\`, "-")
 s = strings.ReplaceAll(s, "/", "-")
 return s
+}
+
+
+
+
+// cleanupStaleTunnels removes any WireGuard tunnel services left from a previous crash
+func cleanupStaleTunnels() {
+wgExe := `C:\Program Files\WireGuard\wireguard.exe`
+tunnelDir := `C:\ProgramData\AcaSkillVPN\tunnels`
+
+// Read all .conf files and try to uninstall each
+entries, err := os.ReadDir(tunnelDir)
+if err != nil {
+// Directory may not exist yet - also try known names
+for _, name := range []string{"acaskill-wi-fi", "acaskill-ethernet-2", "acaskill-ethernet", "acaskill-mobile"} {
+exec.Command(wgExe, "/uninstalltunnelservice", name).Run()
+}
+return
+}
+for _, entry := range entries {
+if strings.HasSuffix(entry.Name(), ".conf") {
+tunnelName := strings.TrimSuffix(entry.Name(), ".conf")
+out, err := exec.Command(wgExe, "/uninstalltunnelservice", tunnelName).CombinedOutput()
+if err == nil {
+log.Printf("[bonding] cleaned up stale tunnel: %s", tunnelName)
+} else if !strings.Contains(string(out), "not installed") {
+log.Printf("[bonding] cleanup %s: %s", tunnelName, strings.TrimSpace(string(out)))
+}
+}
+}
 }
 
 
