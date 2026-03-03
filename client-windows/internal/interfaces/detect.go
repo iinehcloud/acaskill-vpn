@@ -1,77 +1,106 @@
 package interfaces
 
 import (
-"fmt"
+"log"
 "net"
 "strings"
 )
 
 type InterfaceType string
+
 const (
 TypeWiFi     InterfaceType = "WiFi"
 TypeEthernet InterfaceType = "Ethernet"
 TypeMobile   InterfaceType = "Mobile"
+TypeHotspot  InterfaceType = "Hotspot"
 TypeOther    InterfaceType = "Other"
 )
 
 type NetworkInterface struct {
-Name         string
-FriendlyName string
-Type         InterfaceType
-IP           net.IP
-Gateway      net.IP
-MACAddr      string
-IsConnected  bool
+Name         string        `json:"name"`
+FriendlyName string        `json:"friendlyName"`
+Type         InterfaceType `json:"type"`
+IP           net.IP        `json:"ip"`
+Gateway      net.IP        `json:"gateway,omitempty"`
+IsConnected  bool          `json:"isConnected"`
+}
+
+func (n NetworkInterface) Label() string {
+if n.FriendlyName != "" {
+return n.FriendlyName
+}
+return n.Name
 }
 
 func Detect() ([]NetworkInterface, error) {
 ifaces, err := net.Interfaces()
-if err != nil { return nil, fmt.Errorf("list interfaces: %w", err) }
+if err != nil {
+return nil, err
+}
+
 var result []NetworkInterface
+
 for _, iface := range ifaces {
-if iface.Flags&net.FlagLoopback != 0 { continue }
 if iface.Flags&net.FlagUp == 0 { continue }
-if isVirtual(iface.Name) { continue }
-addrs, err := iface.Addrs()
-if err != nil || len(addrs) == 0 { continue }
-var ip net.IP
-for _, addr := range addrs {
-if ipNet, ok := addr.(*net.IPNet); ok {
-if v4 := ipNet.IP.To4(); v4 != nil { ip = v4; break }
-}
-}
+if iface.Flags&net.FlagLoopback != 0 { continue }
+if shouldSkip(iface.Name) { continue }
+
+ip := getIPv4(iface)
 if ip == nil { continue }
-if ip[0] == 169 && ip[1] == 254 { continue }
-result = append(result, NetworkInterface{
+if ip.IsLinkLocalUnicast() { continue }
+
+ni := NetworkInterface{
 Name:         iface.Name,
 FriendlyName: iface.Name,
 Type:         classifyInterface(iface.Name),
 IP:           ip,
-MACAddr:      iface.HardwareAddr.String(),
 IsConnected:  true,
-})
 }
+
+log.Printf("[detect] %s (%s) IP=%s type=%s", iface.Name, iface.HardwareAddr, ip, ni.Type)
+result = append(result, ni)
+}
+
 return result, nil
 }
 
-func isVirtual(name string) bool {
-skip := []string{"loopback","isatap","6to4","teredo","vethernet","acaskill","wg","tun","tap","vmnet","virtualbox"}
-n := strings.ToLower(name)
-for _, s := range skip {
-if strings.Contains(n, s) { return true }
+func getIPv4(iface net.Interface) net.IP {
+addrs, err := iface.Addrs()
+if err != nil { return nil }
+for _, addr := range addrs {
+var ip net.IP
+switch v := addr.(type) {
+case *net.IPNet:  ip = v.IP
+case *net.IPAddr: ip = v.IP
+}
+if ip == nil { continue }
+if v4 := ip.To4(); v4 != nil && !v4.IsLoopback() && !v4.IsLinkLocalUnicast() {
+return v4
+}
+}
+return nil
+}
+
+func shouldSkip(name string) bool {
+lower := strings.ToLower(name)
+for _, skip := range []string{"loopback","vethernet","vmware","virtualbox","docker","hyper","acaskill","tailscale","zerotier","wg"} {
+if strings.Contains(lower, skip) { return true }
 }
 return false
 }
 
 func classifyInterface(name string) InterfaceType {
-n := strings.ToLower(name)
-if strings.Contains(n, "wi-fi") || strings.Contains(n, "wifi") || strings.Contains(n, "wireless") { return TypeWiFi }
-if strings.Contains(n, "ethernet") || strings.Contains(n, "local area") { return TypeEthernet }
-if strings.Contains(n, "mobile") || strings.Contains(n, "modem") || strings.Contains(n, "rndis") { return TypeMobile }
+lower := strings.ToLower(name)
+switch {
+case strings.Contains(lower, "wi-fi") || strings.Contains(lower, "wifi") || strings.Contains(lower, "wlan"):
+return TypeWiFi
+case strings.Contains(lower, "ethernet") && (strings.Contains(lower, "usb") || strings.Contains(lower, "ncm") || strings.Contains(lower, "rndis")):
+return TypeMobile
+case strings.Contains(lower, "ethernet"):
+return TypeEthernet
+case strings.Contains(lower, "mobile") || strings.Contains(lower, "lte") || strings.Contains(lower, "4g"):
+return TypeMobile
+default:
 return TypeOther
 }
-
-func (ni *NetworkInterface) Label() string {
-if ni.FriendlyName != "" { return ni.FriendlyName }
-return string(ni.Type)
 }

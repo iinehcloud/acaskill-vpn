@@ -27,6 +27,7 @@ AssignedIP    string
 ServerPubKey  string
 ServerHost    string
 ServerPort    int
+GatewayIP     string
 Label         string
 ServerIP      string
 }
@@ -113,3 +114,5 @@ label = strings.ReplaceAll(label, " ", "-")
 label = strings.ReplaceAll(label, "/", "-")
 return label
 }
+
+
