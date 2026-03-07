@@ -97,7 +97,7 @@ if tc.ServerIP != "" {
 serverExclude = fmt.Sprintf("# Server IP routed directly (not through tunnel)\r\n# %s/32 excluded via pre-up route\r\n", tc.ServerIP)
 }
 
-return fmt.Sprintf("[Interface]\r\nPrivateKey = %s\r\nAddress = %s/32\r\nDNS = 1.1.1.1\r\n%s\r\n[Peer]\r\nPublicKey = %s\r\nEndpoint = %s:%d\r\nAllowedIPs = 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16\r\nPersistentKeepalive = 25\r\n",
+return fmt.Sprintf("[Interface]\r\nPrivateKey = %s\r\nAddress = %s/32\r\nDNS = 1.1.1.1\r\n%s\r\n[Peer]\r\nPublicKey = %s\r\nEndpoint = %s:%d\r\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1\r\nPersistentKeepalive = 25\r\n",
 tc.PrivateKey, tc.AssignedIP, serverExclude, tc.ServerPubKey, tc.ServerHost, tc.ServerPort)
 }
 

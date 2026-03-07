@@ -161,7 +161,7 @@ tc.GatewayIP     = gatewayIP
 serverIP := b.serverIP
 if serverIP == "" { serverIP, _ = routing.ResolveServerIP(b.cfg.VPNHost) }
 if serverIP != "" {
-metric := 10 + len(b.tunnels)*10
+metric := 1 + len(b.tunnels)
 if routeErr := routing.AddHostRoute(routing.TunnelRoute{
 ServerIP:    serverIP,
 GatewayIP:   gatewayIP,
@@ -260,6 +260,7 @@ latency, alive := b.pingTunnel(t)
 if alive {
 t.UpdateLatency(latency)
 b.sendHeartbeat(t.AssignedIP, latency)
+				b.updateBandwidth(t)
 } else {
 t.mu.Lock(); lastSeen := t.LastSeen; t.mu.Unlock()
 if time.Since(lastSeen) > failover {
@@ -284,6 +285,32 @@ func (b *Bonder) pingTunnel(t *TunnelState) (time.Duration, bool) {
 
 
 
+
+func (b *Bonder) updateBandwidth(t *TunnelState) {
+	tunnelName := "acaskill-" + sanitize(t.Interface.Name)
+	// wg show <tunnel> transfer returns: <rx_bytes>	<tx_bytes>
+	out, err := exec.Command("wg", "show", tunnelName, "transfer").CombinedOutput()
+	if err != nil {
+		return
+	}
+	var rx, tx uint64
+	line := strings.TrimSpace(string(out))
+	// Output format: "<pubkey>	<rx>	<tx>" - take last two fields
+	fields := strings.Fields(line)
+	if len(fields) >= 3 {
+		fmt.Sscanf(fields[len(fields)-2], "%d", &rx)
+		fmt.Sscanf(fields[len(fields)-1], "%d", &tx)
+	} else if len(fields) == 2 {
+		fmt.Sscanf(fields[0], "%d", &rx)
+		fmt.Sscanf(fields[1], "%d", &tx)
+	}
+	if rx > 0 || tx > 0 {
+		t.mu.Lock()
+		t.BytesRecv = rx
+		t.BytesSent = tx
+		t.mu.Unlock()
+	}
+}
 
 func (b *Bonder) rebalanceWeights() {
 b.mu.RLock()

@@ -48,6 +48,7 @@ if shouldSkip(iface.Name) { continue }
 ip := getIPv4(iface)
 if ip == nil { continue }
 if ip.IsLinkLocalUnicast() { continue }
+		if ip[0] == 10 && ip[1] == 168 { continue }
 
 ni := NetworkInterface{
 Name:         iface.Name,
