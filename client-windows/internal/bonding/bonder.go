@@ -15,7 +15,8 @@ import (
 "github.com/acaskill/vpn-client/internal/config"
 "github.com/acaskill/vpn-client/internal/interfaces"
 "github.com/acaskill/vpn-client/internal/routing"
-"github.com/acaskill/vpn-client/internal/wireguard"
+"github.com/acaskill/vpn-client/internal/proxy"
+	"github.com/acaskill/vpn-client/internal/wireguard"
 )
 
 type TunnelState struct {
@@ -99,12 +100,37 @@ cfg      *config.Config
 wgMgr    *wireguard.Manager
 tunnels  map[string]*TunnelState
 serverIP string
+bondProxy *proxy.Proxy
 mu       sync.RWMutex
 running  bool
 }
 
 func New(cfg *config.Config) *Bonder {
 return &Bonder{cfg: cfg, wgMgr: wireguard.New(cfg), tunnels: make(map[string]*TunnelState)}
+}
+
+func (b *Bonder) SetProxy(p *proxy.Proxy) {
+b.mu.Lock()
+b.bondProxy = p
+b.mu.Unlock()
+b.syncProxy()
+}
+
+func (b *Bonder) syncProxy() {
+b.mu.RLock()
+p := b.bondProxy
+var ifaces []proxy.TunnelIface
+for _, t := range b.tunnels {
+t.mu.Lock()
+if t.IsConnected {
+ifaces = append(ifaces, proxy.TunnelIface{Name: "acaskill-" + sanitize(t.Interface.Name), AssignedIP: t.AssignedIP})
+}
+t.mu.Unlock()
+}
+b.mu.RUnlock()
+if p != nil {
+p.UpdateTunnels(ifaces)
+}
 }
 
 func (b *Bonder) Start(ctx context.Context) error {
@@ -139,11 +165,15 @@ log.Println("[bonding] engine stopped")
 }
 
 func (b *Bonder) ConnectInterface(iface interfaces.NetworkInterface) error {
-b.mu.Lock(); defer b.mu.Unlock()
+b.mu.Lock()
 if _, exists := b.tunnels[iface.Name]; exists {
+b.mu.Unlock()
 log.Printf("[bonding] %s already connected", iface.FriendlyName)
 return nil
 }
+serverIP := b.serverIP
+tunnelCount := len(b.tunnels)
+b.mu.Unlock()
 log.Printf("[bonding] connecting: %s (IP: %s)", iface.FriendlyName, iface.IP)
 
 gatewayIP := routing.GetGatewayForInterface(iface.IP.String())
@@ -169,10 +199,9 @@ tc.InterfaceName = iface.Name
 tc.InterfaceIP   = iface.IP.String()
 tc.GatewayIP     = gatewayIP
 
-serverIP := b.serverIP
 if serverIP == "" { serverIP, _ = routing.ResolveServerIP(b.cfg.VPNHost) }
 if serverIP != "" {
-metric := 1 + len(b.tunnels)
+metric := 1 + tunnelCount
 if routeErr := routing.AddHostRoute(routing.TunnelRoute{
 ServerIP:    serverIP,
 GatewayIP:   gatewayIP,
@@ -189,6 +218,7 @@ if serverIP != "" { routing.RemoveHostRoute(serverIP, gatewayIP) }
 return fmt.Errorf("bring up tunnel for %s: %w", iface.Name, err)
 }
 
+b.mu.Lock()
 b.tunnels[iface.Name] = &TunnelState{
 Interface:   iface,
 TunnelCfg:   tc,
@@ -200,7 +230,9 @@ IsConnected: true,
 LastSeen:    time.Now(),
 Weight:      1.0,
 }
+b.mu.Unlock()
 log.Printf("[bonding] OK %s connected vpn-ip=%s gw=%s", iface.FriendlyName, tc.AssignedIP, gatewayIP)
+b.syncProxy()
 return nil
 }
 
@@ -211,6 +243,7 @@ if !exists { return nil }
 b.teardownTunnel(tunnel)
 delete(b.tunnels, ifaceName)
 log.Printf("[bonding] %s disconnected", ifaceName)
+b.syncProxy()
 return nil
 }
 

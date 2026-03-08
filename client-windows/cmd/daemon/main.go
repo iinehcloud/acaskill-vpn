@@ -11,6 +11,7 @@ import (
 "github.com/acaskill/vpn-client/internal/bonding"
 "github.com/acaskill/vpn-client/internal/config"
 "github.com/acaskill/vpn-client/internal/ipc"
+	"github.com/acaskill/vpn-client/internal/proxy"
 "golang.org/x/sys/windows/svc"
 "golang.org/x/sys/windows/svc/debug"
 "golang.org/x/sys/windows/svc/eventlog"
@@ -67,6 +68,10 @@ changes <- svc.Status{State: svc.StartPending}
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
 s.bonder.Start(ctx)
+bondProxy := proxy.New("127.0.0.1:1080")
+if err := bondProxy.Start(ctx); err == nil {
+s.bonder.SetProxy(bondProxy)
+}
 s.server.Start(ctx, s.bonder)
 changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 for c := range r {
@@ -108,6 +113,15 @@ if err := bonder.Start(ctx); err != nil {
 log.Fatalf("[daemon] bonder start failed: %v", err)
 }
 log.Println("[daemon] bonding engine started")
+
+// Start bonding proxy
+bondProxy := proxy.New("127.0.0.1:1080")
+if err := bondProxy.Start(ctx); err != nil {
+log.Printf("[daemon] proxy start failed: %v", err)
+} else {
+bonder.SetProxy(bondProxy)
+log.Println("[daemon] bonding proxy started on 127.0.0.1:1080")
+}
 
 if err := ipcServer.Start(ctx, bonder); err != nil {
 log.Fatalf("[daemon] IPC server failed: %v", err)

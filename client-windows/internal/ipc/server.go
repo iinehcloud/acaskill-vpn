@@ -7,7 +7,8 @@ import (
 "io"
 "log"
 "net"
-"time"
+"sync"
+	"time"
 
 "github.com/acaskill/vpn-client/internal/bonding"
 "github.com/acaskill/vpn-client/internal/config"
@@ -176,11 +177,17 @@ ifaces, err := bonder.GetAvailableInterfaces()
 if err != nil {
 return errResp(req.ID, err.Error())
 }
+var wg sync.WaitGroup
 for _, iface := range ifaces {
-if iface.IsConnected {
-bonder.ConnectInterface(iface)
+wg.Add(1)
+go func(i interfaces.NetworkInterface) {
+defer wg.Done()
+if err := bonder.ConnectInterface(i); err != nil {
+log.Printf("[ipc] connect %s: %v", i.FriendlyName, err)
 }
+}(iface)
 }
+wg.Wait()
 return okResp(req.ID)
 
 case MsgDisconnectAll:
