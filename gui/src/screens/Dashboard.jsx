@@ -46,7 +46,7 @@ export default function Dashboard() {
         <StatusBadge connected={isConnected} tunnels={activeTunnels} />
       </header>
       <section className="hero-section">
-        <SpeedGauge bytesRecv={bytesRecv} bytesSent={bytesSent} connected={isConnected} />
+        <SpeedGauge status={status} connected={isConnected} />
         <div className="hero-stats">
           <div className="stat"><span className="stat-value">{activeTunnels}/{totalTunnels}</span><span className="stat-label">Interfaces</span></div>
           <div className="stat-divider" />

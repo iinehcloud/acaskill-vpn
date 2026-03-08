@@ -15,7 +15,7 @@
         "title": "AcaSkill VPN",
         "width": 380,
         "height": 620,
-        "resizable": false,
+        "resizable": true, "minWidth": 340, "minHeight": 500,
         "center": true
       }
     ],
@@ -35,3 +35,5 @@
     ]
   }
 }
+
+

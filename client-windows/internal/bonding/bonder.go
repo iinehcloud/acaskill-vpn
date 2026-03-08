@@ -30,6 +30,11 @@ Latency     time.Duration
 LastSeen    time.Time
 BytesSent   uint64
 BytesRecv   uint64
+PrevSent    uint64
+PrevRecv    uint64
+SpeedTx     float64
+SpeedRx     float64
+LastBwTime  time.Time
 Weight      float64
 mu          sync.Mutex
 }
@@ -55,6 +60,8 @@ IsConnected:   t.IsConnected,
 LatencyMs:     float64(t.Latency.Milliseconds()),
 BytesSent:     t.BytesSent,
 BytesRecv:     t.BytesRecv,
+SpeedTx:       t.SpeedTx,
+SpeedRx:       t.SpeedRx,
 Weight:        t.Weight,
 }
 }
@@ -68,6 +75,8 @@ IsConnected   bool    `json:"isConnected"`
 LatencyMs     float64 `json:"latencyMs"`
 BytesSent     uint64  `json:"bytesSent"`
 BytesRecv     uint64  `json:"bytesRecv"`
+SpeedTx       float64 `json:"speedTxMbps"`
+SpeedRx       float64 `json:"speedRxMbps"`
 Weight        float64 `json:"weight"`
 }
 
@@ -79,6 +88,8 @@ Tunnels         []TunnelSnapshot `json:"tunnels"`
 CombinedLatency float64          `json:"combinedLatencyMs"`
 TotalBytesSent  uint64           `json:"totalBytesSent"`
 TotalBytesRecv  uint64           `json:"totalBytesRecv"`
+TotalSpeedTx    float64          `json:"totalSpeedTxMbps"`
+TotalSpeedRx    float64          `json:"totalSpeedRxMbps"`
 ServerRegion    string           `json:"serverRegion"`
 ServerIP        string           `json:"serverIp"`
 }
@@ -225,6 +236,8 @@ snap := t.Snapshot()
 status.Tunnels = append(status.Tunnels, snap)
 status.TotalBytesSent += snap.BytesSent
 status.TotalBytesRecv += snap.BytesRecv
+status.TotalSpeedTx += snap.SpeedTx
+status.TotalSpeedRx += snap.SpeedRx
 if snap.IsConnected { activeCount++; totalLatency += snap.LatencyMs }
 }
 status.ActiveTunnels = activeCount
@@ -304,12 +317,25 @@ func (b *Bonder) updateBandwidth(t *TunnelState) {
 		fmt.Sscanf(fields[0], "%d", &rx)
 		fmt.Sscanf(fields[1], "%d", &tx)
 	}
-	if rx > 0 || tx > 0 {
-		t.mu.Lock()
-		t.BytesRecv = rx
-		t.BytesSent = tx
-		t.mu.Unlock()
+	now := time.Now()
+	t.mu.Lock()
+	if !t.LastBwTime.IsZero() {
+		elapsed := now.Sub(t.LastBwTime).Seconds()
+		if elapsed > 0 {
+			if tx >= t.PrevSent {
+				t.SpeedTx = float64(tx-t.PrevSent) * 8 / elapsed / 1_000_000
+			}
+			if rx >= t.PrevRecv {
+				t.SpeedRx = float64(rx-t.PrevRecv) * 8 / elapsed / 1_000_000
+			}
+		}
 	}
+	t.BytesSent = tx
+	t.BytesRecv = rx
+	t.PrevSent = tx
+	t.PrevRecv = rx
+	t.LastBwTime = now
+	t.mu.Unlock()
 }
 
 func (b *Bonder) rebalanceWeights() {
