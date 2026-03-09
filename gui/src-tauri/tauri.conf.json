@@ -15,7 +15,9 @@
         "title": "AcaSkill VPN",
         "width": 380,
         "height": 620,
-        "resizable": true, "minWidth": 340, "minHeight": 500,
+        "resizable": true,
+        "minWidth": 340,
+        "minHeight": 500,
         "center": true
       }
     ],
@@ -32,8 +34,26 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../../client-windows/build/acaskill-daemon.exe": "acaskill-daemon.exe",
+      "../../client-windows/build/acaskill-cli.exe": "acaskill-cli.exe"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": [
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "installerHooks": "../../installer-hooks.nsh"
+      },
+      "wix": null
+    },
+    "publisher": "AcaSkill",
+    "copyright": "Copyright (c) 2026 AcaSkill",
+    "category": "Utility",
+    "shortDescription": "Bond multiple internet connections into one fast VPN",
+    "longDescription": "AcaSkill VPN bonds multiple network interfaces (Ethernet, Wi-Fi, Mobile) into a single high-speed encrypted tunnel, maximizing your available bandwidth."
   }
 }
-
-
