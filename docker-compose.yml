@@ -77,6 +77,7 @@ services:
       WG_SERVER_PUBLIC_KEY: ${WG_SERVER_PUBLIC_KEY}
       WG_CONFIG_PATH: /etc/wireguard/wg0.conf
       AGG_PORT: ${AGG_PORT}
+      AGG_UDP_PORT: ${AGG_UDP_PORT}
       WG_PORT: ${WG_PORT}
     volumes:
       - /etc/wireguard/wg0.conf:/etc/wireguard/wg0.conf   # API manages peers
@@ -86,8 +87,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    privileged: true
+    pid: host
+    devices:
+      - /dev/net/tun:/dev/net/tun
     cap_add:
-      - NET_ADMIN   # needed to run wg commands
+      - NET_ADMIN
+      - SYS_ADMIN
 
   # ── Bonding Aggregator (Go) ────────────────────────────────────────────────
   aggregator:
@@ -98,13 +104,17 @@ services:
     restart: unless-stopped
     ports:
       - "${AGG_PORT}:${AGG_PORT}/tcp"
+      - "${AGG_UDP_PORT}:${AGG_UDP_PORT}/udp"
     environment:
       AGG_PORT: ${AGG_PORT}
+      AGG_UDP_PORT: ${AGG_UDP_PORT}
       API_SECRET: ${API_SECRET}
       API_URL: http://api:3000
       WG_SUBNET: "10.8.0.0/16"
     networks:
       - acaskill
+    devices:
+      - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN
       - NET_RAW
