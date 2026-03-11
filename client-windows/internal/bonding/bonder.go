@@ -16,6 +16,7 @@ import (
 "github.com/acaskill/vpn-client/internal/interfaces"
 "github.com/acaskill/vpn-client/internal/routing"
 "github.com/acaskill/vpn-client/internal/proxy"
+"github.com/acaskill/vpn-client/internal/tun"
 	"github.com/acaskill/vpn-client/internal/wireguard"
 )
 
@@ -101,6 +102,7 @@ wgMgr    *wireguard.Manager
 tunnels  map[string]*TunnelState
 serverIP string
 bondProxy *proxy.Proxy
+bondAdapter *tun.Adapter
 mu       sync.RWMutex
 running  bool
 }
@@ -116,6 +118,33 @@ b.mu.Unlock()
 b.syncProxy()
 }
 
+func (b *Bonder) SetAdapter(a *tun.Adapter) {
+b.mu.Lock()
+b.bondAdapter = a
+b.mu.Unlock()
+b.syncAdapter()
+}
+func (b *Bonder) syncAdapter() {
+b.mu.RLock()
+a := b.bondAdapter
+tunnels := make(map[string]*TunnelState, len(b.tunnels))
+for k, v := range b.tunnels { tunnels[k] = v }
+b.mu.RUnlock()
+if a == nil { return }
+for _, t := range tunnels {
+t.mu.Lock()
+connected := t.IsConnected
+ip := t.AssignedIP
+label := t.Interface.FriendlyName
+physIP := t.Interface.IP.String()
+t.mu.Unlock()
+if connected && ip != "" {
+a.AddEndpoint(label, physIP, ip, b.cfg.VPNHost, 7979)
+} else {
+a.RemoveEndpoint(label)
+}
+}
+}
 func (b *Bonder) syncProxy() {
 b.mu.RLock()
 p := b.bondProxy
@@ -233,6 +262,7 @@ Weight:      1.0,
 b.mu.Unlock()
 log.Printf("[bonding] OK %s connected vpn-ip=%s gw=%s", iface.FriendlyName, tc.AssignedIP, gatewayIP)
 b.syncProxy()
+b.syncAdapter()
 return nil
 }
 
@@ -244,6 +274,7 @@ b.teardownTunnel(tunnel)
 delete(b.tunnels, ifaceName)
 log.Printf("[bonding] %s disconnected", ifaceName)
 b.syncProxy()
+b.syncAdapter()
 return nil
 }
 

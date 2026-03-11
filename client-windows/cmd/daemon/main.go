@@ -12,6 +12,7 @@ import (
 "github.com/acaskill/vpn-client/internal/config"
 "github.com/acaskill/vpn-client/internal/ipc"
 	"github.com/acaskill/vpn-client/internal/proxy"
+"github.com/acaskill/vpn-client/internal/tun"
 "golang.org/x/sys/windows/svc"
 "golang.org/x/sys/windows/svc/debug"
 "golang.org/x/sys/windows/svc/eventlog"
@@ -71,6 +72,16 @@ s.bonder.Start(ctx)
 bondProxy := proxy.New("127.0.0.1:1080")
 if err := bondProxy.Start(ctx); err == nil {
 s.bonder.SetProxy(bondProxy)
+bondAdapter, err := tun.New(s.cfg.DeviceID)
+if err != nil {
+log.Printf("[daemon] tun adapter init failed: %v", err)
+} else if err := bondAdapter.Start(ctx); err != nil {
+log.Printf("[daemon] tun adapter start failed: %v", err)
+} else {
+s.bonder.SetAdapter(bondAdapter)
+defer bondAdapter.Stop()
+log.Println("[daemon] TUN bonding adapter started")
+}
 }
 s.server.Start(ctx, s.bonder)
 changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
@@ -121,6 +132,17 @@ log.Printf("[daemon] proxy start failed: %v", err)
 } else {
 bonder.SetProxy(bondProxy)
 log.Println("[daemon] bonding proxy started on 127.0.0.1:1080")
+bondAdapter, err := tun.New(cfg.DeviceID)
+if err != nil {
+log.Printf("[daemon] tun adapter init failed: %v", err)
+} else if err := bondAdapter.Start(ctx); err != nil {
+log.Printf("[daemon] tun adapter start failed: %v", err)
+} else {
+bonder.SetAdapter(bondAdapter)
+defer bondAdapter.Stop()
+log.Println("[daemon] TUN bonding adapter started")
+}
+log.Println("[daemon] bonding proxy SKIP on 127.0.0.1:1080")
 }
 
 if err := ipcServer.Start(ctx, bonder); err != nil {
