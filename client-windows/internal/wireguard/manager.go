@@ -24,6 +24,7 @@ InterfaceIP   string
 PrivateKey    string
 PublicKey     string
 AssignedIP    string
+SessionKey    string
 ServerPubKey  string
 ServerHost    string
 ServerPort    int
@@ -66,6 +67,7 @@ InterfaceLabel string `json:"interfaceLabel"`
 type resp struct {
 OK           bool   `json:"ok"`
 AssignedIP   string `json:"assignedIp"`
+SessionKey   string `json:"sessionKey"`
 ServerPubKey string `json:"serverPubKey"`
 ServerPort   int    `json:"serverPort"`
 ServerIP     string `json:"serverIp"`
@@ -82,6 +84,7 @@ if !result.OK { return nil, fmt.Errorf("server: %s", result.Error) }
 return &TunnelConfig{
 AssignedIP:   result.AssignedIP,
 ServerPubKey: result.ServerPubKey,
+SessionKey:   result.SessionKey,
 ServerHost:   m.cfg.VPNHost,
 ServerPort:   result.ServerPort,
 ServerIP:     result.ServerIP,

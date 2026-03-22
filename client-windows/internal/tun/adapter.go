@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+"github.com/acaskill/vpn-client/internal/crypto"
 	"time"
 
 	wtun "golang.zx2c4.com/wireguard/tun"
@@ -42,6 +43,7 @@ const (
 type Endpoint struct {
 	Label      string
 	TunnelIP   string       // this device's assigned IP in this WG tunnel
+	session    *crypto.Session
 	ServerAddr *net.UDPAddr // aggregator UDP address
 	conn       *net.UDPConn // UDP socket bound to TunnelIP
 	active     bool
@@ -90,7 +92,7 @@ func New(deviceIDStr string) (*Adapter, error) {
 // tunnelIP: device's assigned IP in this tunnel (e.g. "10.8.1.4")
 // serverHost: aggregator host (e.g. "vpn.acaskill.com")
 // serverPort: aggregator UDP port (e.g. 7979)
-func (a *Adapter) AddEndpoint(label, physicalIP, tunnelIP, serverHost string, serverPort int) error {
+func (a *Adapter) AddEndpoint(label, physicalIP, tunnelIP, serverHost string, serverPort int, sessionKeyHex string) error {
 	serverAddr, err := net.ResolveUDPAddr("udp4",
 		fmt.Sprintf("%s:%d", serverHost, serverPort))
 	if err != nil {
@@ -107,6 +109,14 @@ func (a *Adapter) AddEndpoint(label, physicalIP, tunnelIP, serverHost string, se
 		return fmt.Errorf("bind %s: %w", tunnelIP, err)
 	}
 
+	var sess *crypto.Session
+	if sessionKeyHex != "" {
+		if s, err2 := crypto.NewSession(sessionKeyHex); err2 == nil {
+			sess = s
+		} else {
+			log.Printf("[bond] crypto init failed for %s: %v", label, err2)
+		}
+	}
 	ep := &Endpoint{
 		Label:      label,
 		TunnelIP:   tunnelIP,
@@ -114,7 +124,8 @@ func (a *Adapter) AddEndpoint(label, physicalIP, tunnelIP, serverHost string, se
 		conn:       conn,
 		active:     true,
 		lastSeen:   time.Now(),
-	}
+			session:    sess,
+		}
 
 	a.epMu.Lock()
 	a.endpoints = append(a.endpoints, ep)
@@ -253,7 +264,21 @@ func (a *Adapter) sendWrapped(ep *Endpoint, seq uint64, payload []byte) {
 
 	binary.BigEndian.PutUint16(pkt[28:30], tunIdx)
 	binary.BigEndian.PutUint16(pkt[30:32], uint16(len(payload)))
-	copy(pkt[HeaderSize:], payload)
+	// Encrypt payload if session key available
+	if ep.session != nil {
+		encrypted, err := ep.session.Encrypt(payload)
+		if err == nil {
+			pkt = make([]byte, HeaderSize+len(encrypted))
+			binary.BigEndian.PutUint32(pkt[0:4], MagicClient)
+			copy(pkt[4:20], a.deviceID[:])
+			binary.BigEndian.PutUint64(pkt[20:28], seq)
+			binary.BigEndian.PutUint16(pkt[28:30], tunIdx)
+			binary.BigEndian.PutUint16(pkt[30:32], uint16(len(encrypted)))
+			copy(pkt[HeaderSize:], encrypted)
+		}
+	} else {
+		copy(pkt[HeaderSize:], payload)
+	}
 	ep.send(pkt)
 }
 
@@ -314,12 +339,24 @@ func (a *Adapter) recvLoop(ctx context.Context, ep *Endpoint) {
 			continue
 		}
 
-		pkt := make([]byte, payloadLen)
-		copy(pkt, buf[RetHeaderSize:RetHeaderSize+payloadLen])
+		rawPayload := buf[RetHeaderSize:RetHeaderSize+payloadLen]
 
 		ep.mu.Lock()
+		sess := ep.session
 		ep.lastSeen = time.Now()
 		ep.mu.Unlock()
+
+		var pkt []byte
+		if sess != nil {
+			decrypted, err := sess.Decrypt(rawPayload)
+			if err != nil {
+				continue // drop invalid packet
+			}
+			pkt = decrypted
+		} else {
+			pkt = make([]byte, payloadLen)
+			copy(pkt, rawPayload)
+		}
 
 		select {
 		case a.retBuf <- pkt:

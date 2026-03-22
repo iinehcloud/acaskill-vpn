@@ -137,9 +137,11 @@ connected := t.IsConnected
 ip := t.AssignedIP
 label := t.Interface.FriendlyName
 physIP := t.Interface.IP.String()
+sessionKey := ""
+if t.TunnelCfg != nil { sessionKey = t.TunnelCfg.SessionKey }
 t.mu.Unlock()
 if connected && ip != "" {
-a.AddEndpoint(label, physIP, ip, b.cfg.VPNHost, 7979)
+a.AddEndpoint(label, physIP, ip, b.cfg.VPNHost, 7979, sessionKey)
 } else {
 a.RemoveEndpoint(label)
 }
