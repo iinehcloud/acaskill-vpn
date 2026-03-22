@@ -1,0 +1,21 @@
+[Unit]
+Description=AcaSkill VPN Aggregator
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/acaskill-vpn/.env
+Environment=AGG_PORT=7878
+Environment=AGG_UDP_PORT=7979
+Environment=TUN_NAME=acaskill-agg
+Environment=TUN_ADDR=10.9.0.1/24
+Environment=WG_SUBNET=10.8.0.0/16
+ExecStartPre=-/sbin/ip link delete acaskill-agg
+ExecStart=/usr/local/bin/acaskill-aggregator
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/acaskill-agg.log
+StandardError=append:/var/log/acaskill-agg.log
+
+[Install]
+WantedBy=multi-user.target

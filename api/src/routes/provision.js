@@ -60,6 +60,7 @@ export async function provisionRoutes(app) {
         sessionKey = randomBytes(32).toString('hex')
         await sql`UPDATE wg_peers SET session_key = ${sessionKey} WHERE public_key = ${publicKey}`
       }
+      await notifyAggregator(deviceId, existing.assigned_ip, interfaceLabel || 'unknown', sessionKey)
       return { ok: true, assignedIp: existing.assigned_ip, serverPubKey: SERVER_PUBKEY, serverPort: WG_PORT, endpoint: VPN_DOMAIN + ':' + WG_PORT, sessionKey }
     }
     const [{ allocate_peer_ip: assignedIp }] = await sql`SELECT allocate_peer_ip()`
@@ -68,6 +69,7 @@ export async function provisionRoutes(app) {
     await addWgPeer(publicKey, assignedIp)
     await sql`UPDATE devices SET last_seen_at = NOW() WHERE id = ${deviceId}`
     app.log.info({ publicKey, assignedIp, interfaceLabel }, 'Peer provisioned')
+    await notifyAggregator(deviceId, assignedIp, interfaceLabel || 'unknown', sessionKey)
     return { ok: true, assignedIp, serverPubKey: SERVER_PUBKEY, serverPort: WG_PORT, endpoint: VPN_DOMAIN + ':' + WG_PORT, sessionKey }
   })
 
@@ -93,4 +95,17 @@ export async function provisionRoutes(app) {
     if (ip) await sql`UPDATE wg_peers SET last_seen_at = NOW() WHERE assigned_ip = ${ip}`
     return { ok: true }
   })
+}
+
+async function notifyAggregator(deviceId, ip, label, sessionKey) {
+  try {
+    const res = await fetch('http://172.20.0.1:7878/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': process.env.API_SECRET },
+      body: JSON.stringify({ deviceId, ip, label, sessionKey })
+    })
+    if (!res.ok) throw new Error(await res.text())
+  } catch(e) {
+    console.error('[provision] aggregator notify failed:', e.message)
+  }
 }

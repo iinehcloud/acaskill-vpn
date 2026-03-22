@@ -103,6 +103,7 @@ type Device struct {
 	nextExpected uint64          // next seq we're waiting to forward
 	reorderBuf  [ReorderBuf]*ReorderEntry
 	outSeq      atomic.Uint64   // seq counter for return packets
+	Session *CryptoSession
 	mu          sync.Mutex
 }
 
@@ -322,6 +323,19 @@ func (a *Aggregator) handlePacket(pkt []byte, addr *net.UDPAddr) {
 	peer.mu.Unlock()
 	dev.mu.Unlock()
 
+	// Decrypt payload if session exists
+	dev.mu.Lock()
+	sess := dev.Session
+	dev.mu.Unlock()
+	if sess != nil {
+		decrypted, decErr := sess.decrypt(payload)
+		if decErr != nil {
+			log.Printf("[udp] decrypt failed from %s: %v", srcIP, decErr)
+			return
+		}
+		payload = decrypted
+	}
+
 	// Reorder and forward
 	ready := dev.insertReorder(seq, payload)
 	for _, p := range ready {
@@ -452,9 +466,10 @@ func (a *Aggregator) setupTUN() error {
 // ── HTTP control API ──────────────────────────────────────────────────────────
 
 type RegisterRequest struct {
-	DeviceID string `json:"deviceId"`
-	IP       string `json:"ip"`
-	Label    string `json:"label"`
+	DeviceID   string `json:"deviceId"`
+	IP         string `json:"ip"`
+	Label      string `json:"label"`
+	SessionKey string `json:"sessionKey"`
 }
 
 type HeartbeatRequest struct {
@@ -505,6 +520,14 @@ func (a *Aggregator) startHTTP(ctx context.Context) {
 		p := &Peer{IP: ip, DeviceID: req.DeviceID, Label: req.Label, LastSeen: time.Now(), Weight: 1.0}
 		dev.addPeer(p)
 		a.ipIndex.Store(req.IP, req.DeviceID)
+		if req.SessionKey != "" {
+			if sess, err := newCryptoSession(req.SessionKey); err == nil {
+				dev.mu.Lock()
+				dev.Session = sess
+				dev.mu.Unlock()
+				log.Printf("[crypto] session set for device %s", req.DeviceID[:8])
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
