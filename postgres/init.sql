@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS wg_peers (
     interface_label VARCHAR(64),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_handshake  TIMESTAMPTZ,
-    last_seen_at    TIMESTAMPTZ DEFAULT NOW()
+    last_seen_at    TIMESTAMPTZ DEFAULT NOW(),
+    session_key     VARCHAR(64)
 );
 
 -- Connection sessions for monitoring

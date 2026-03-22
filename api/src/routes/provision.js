@@ -2,6 +2,7 @@ import { sql } from '../db.js'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs/promises'
+import { randomBytes } from 'crypto'
 
 const execAsync = promisify(exec)
 const WG_CONFIG     = process.env.WG_CONFIG_PATH || '/etc/wireguard/wg0.conf'
@@ -54,14 +55,20 @@ export async function provisionRoutes(app) {
     const [existing] = await sql`SELECT assigned_ip FROM wg_peers WHERE public_key = ${publicKey}`
     if (existing) {
       await addWgPeer(publicKey, existing.assigned_ip)
-      return { ok: true, assignedIp: existing.assigned_ip, serverPubKey: SERVER_PUBKEY, serverPort: WG_PORT, endpoint: VPN_DOMAIN + ':' + WG_PORT }
+      let sessionKey = existing.session_key
+      if (!sessionKey) {
+        sessionKey = randomBytes(32).toString('hex')
+        await sql`UPDATE wg_peers SET session_key = ${sessionKey} WHERE public_key = ${publicKey}`
+      }
+      return { ok: true, assignedIp: existing.assigned_ip, serverPubKey: SERVER_PUBKEY, serverPort: WG_PORT, endpoint: VPN_DOMAIN + ':' + WG_PORT, sessionKey }
     }
     const [{ allocate_peer_ip: assignedIp }] = await sql`SELECT allocate_peer_ip()`
-    await sql`INSERT INTO wg_peers (device_id, assigned_ip, public_key, interface_label) VALUES (${deviceId}, ${assignedIp}, ${publicKey}, ${interfaceLabel || 'unknown'})`
+    const sessionKey = randomBytes(32).toString('hex')
+    await sql`INSERT INTO wg_peers (device_id, assigned_ip, public_key, interface_label, session_key) VALUES (${deviceId}, ${assignedIp}, ${publicKey}, ${interfaceLabel || 'unknown'}, ${sessionKey})`
     await addWgPeer(publicKey, assignedIp)
     await sql`UPDATE devices SET last_seen_at = NOW() WHERE id = ${deviceId}`
     app.log.info({ publicKey, assignedIp, interfaceLabel }, 'Peer provisioned')
-    return { ok: true, assignedIp, serverPubKey: SERVER_PUBKEY, serverPort: WG_PORT, endpoint: VPN_DOMAIN + ':' + WG_PORT }
+    return { ok: true, assignedIp, serverPubKey: SERVER_PUBKEY, serverPort: WG_PORT, endpoint: VPN_DOMAIN + ':' + WG_PORT, sessionKey }
   })
 
   app.delete('/peer', {

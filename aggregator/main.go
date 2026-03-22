@@ -437,25 +437,13 @@ func (a *Aggregator) flushLoop(ctx context.Context) {
 // ── TUN setup ─────────────────────────────────────────────────────────────────
 
 func (a *Aggregator) setupTUN() error {
-	// Create TUN interface
-	out, err := exec.Command("ip", "tuntap", "add", "dev", a.cfg.TUNName, "mode", "tun").CombinedOutput()
+	fd, err := openTUN(a.cfg.TUNName)
 	if err != nil {
-		log.Printf("[tun] create warning (may already exist): %s", string(out))
+		return fmt.Errorf("open TUN: %w", err)
 	}
-	// Assign IP
 	exec.Command("ip", "addr", "add", a.cfg.TUNAddr, "dev", a.cfg.TUNName).Run()
-	// Bring up
 	exec.Command("ip", "link", "set", a.cfg.TUNName, "up").Run()
-	// Route WG subnet through TUN for return traffic
 	exec.Command("ip", "route", "add", a.cfg.WGSubnet, "dev", a.cfg.TUNName).Run()
-
-	// Open TUN fd
-	fd, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("open /dev/net/tun: %w", err)
-	}
-	// ioctl to bind to our interface name — simplified: use fd directly
-	// In production use golang.zx2c4.com/wireguard/tun
 	a.tunFd = fd
 	log.Printf("[tun] interface %s up with %s", a.cfg.TUNName, a.cfg.TUNAddr)
 	return nil
